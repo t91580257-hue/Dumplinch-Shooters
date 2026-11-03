@@ -1,5 +1,5 @@
 
-name: Build DUMPLINCH SHOOTERS Release APK
+name: Build DUMPLINCH SHOOTERS Debug APK
 
 on:
   workflow_dispatch:
@@ -38,7 +38,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y unzip wget python3
+          sudo apt-get install -y unzip wget
 
       - name: Extract game project
         run: |
@@ -47,47 +47,35 @@ jobs:
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ZIP archive not found"
+            echo "ERROR: ZIP archive not found"
             exit 1
           fi
 
-          echo "Found: $ZIP_FILE"
+          echo "Found archive: $ZIP_FILE"
+
           unzip -oq "$ZIP_FILE" -d game_src
 
           PROJECT_FILE=$(find game_src -name project.godot -print -quit)
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "project.godot not found"
+            echo "ERROR: project.godot not found"
             exit 1
           fi
 
           echo "PROJECT_DIR=$(dirname "$PROJECT_FILE")" >> "$GITHUB_ENV"
 
       - name: Fix project permissions
-        run: chmod -R u+rwX "$PROJECT_DIR"
-
-      - name: Prepare signing key
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          mkdir -p signing
-
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "ANDROID_KEYSTORE_BASE64 is missing"
-            exit 1
-          fi
-
-          echo "$KEYSTORE_BASE64" | base64 --decode > signing/dumplinch-release.jks
-
-          test -s signing/dumplinch-release.jks
-
-          echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/signing/dumplinch-release.jks" >> "$GITHUB_ENV"
+          chmod -R u+rwX "$PROJECT_DIR"
 
       - name: Download Godot 4.3
         run: |
           wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+
           unzip -q Godot_v4.3-stable_linux.x86_64.zip
+
           chmod +x Godot_v4.3-stable_linux.x86_64
+
           sudo mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
 
       - name: Install export templates
@@ -100,92 +88,26 @@ jobs:
 
           cp -r /tmp/godot-templates/templates/* ~/.local/share/godot/export_templates/4.3.stable/
 
-      - name: Configure Android signing
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      - name: Import project resources
         run: |
-          python3 - <<'PY'
-          import os, re, json, pathlib, sys
+          godot --headless --editor \
+            --path "$PROJECT_DIR" \
+            --import --quit
 
-          project = pathlib.Path(os.environ["PROJECT_DIR"])
-          cfg = project / "export_presets.cfg"
-
-          if not cfg.exists():
-              sys.exit("ERROR: export_presets.cfg not found")
-
-          text = cfg.read_text()
-          sections = list(re.finditer(r"(?m)^\[([^\]]+)\]\s*$", text))
-          android_section = None
-
-          for i, match in enumerate(sections):
-              if not re.fullmatch(r"preset\.\d+", match.group(1)):
-                  continue
-
-              end = sections[i + 1].start() if i + 1 < len(sections) else len(text)
-              block = text[match.end():end]
-
-              if re.search(r'(?m)^name\s*=\s*"Android"\s*$', block):
-                  android_section = match.group(1)
-                  break
-
-          if not android_section:
-              sys.exit('ERROR: Android preset named "Android" not found')
-
-          options_name = android_section + ".options"
-          options_match = None
-
-          for i, match in enumerate(sections):
-              if match.group(1) == options_name:
-                  end = sections[i + 1].start() if i + 1 < len(sections) else len(text)
-                  options_match = (match, end)
-                  break
-
-          if not options_match:
-              sys.exit("ERROR: Android preset options section not found")
-
-          start = options_match[0].end()
-          end = options_match[1]
-          block = text[start:end]
-
-          values = {
-              "keystore/release": os.environ["KEYSTORE_PATH"],
-              "keystore/release_user": os.environ["KEY_ALIAS"],
-              "keystore/release_password": os.environ["KEYSTORE_PASSWORD"],
-          }
-
-          for key, value in values.items():
-              line = key + "=" + json.dumps(value)
-              pattern = r"(?m)^" + re.escape(key) + r"\s*=.*$"
-
-              if re.search(pattern, block):
-                  block = re.sub(pattern, lambda _: line, block)
-              else:
-                  block += "\n" + line
-
-          text = text[:start] + block + text[end:]
-          cfg.write_text(text)
-
-          print("Android release signing configured.")
-          PY
-
-      - name: Import resources
-        run: |
-          godot --headless --editor --path "$PROJECT_DIR" --import --quit
-
-      - name: Build signed Release APK
+      - name: Build Debug APK
         run: |
           mkdir -p build
 
-          godot --headless --path "$PROJECT_DIR" \
-            --export-release "Android" \
-            "$GITHUB_WORKSPACE/build/dumplinch-shooters-release.apk"
+          godot --headless \
+            --path "$PROJECT_DIR" \
+            --export-debug "Android" \
+            "$GITHUB_WORKSPACE/build/dumplinch-shooters-debug.apk"
 
-          test -s build/dumplinch-shooters-release.apk
+          test -s build/dumplinch-shooters-debug.apk
 
-      - name: Upload Release APK
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: Dumplinch-Shooters-Release
-          path: build/dumplinch-shooters-release.apk
+          name: DUMPLINCH-SHOOTERS-DEBUG
+          path: build/dumplinch-shooters-debug.apk
           if-no-files-found: error

@@ -31,11 +31,12 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
-          yes | sdkmanager --licenses
+          yes | sdkmanager --licenses || true
           sdkmanager \
             "platform-tools" \
             "platforms;android-34" \
-            "build-tools;34.0.0"
+            "build-tools;34.0.0" \
+            "cmdline-tools;latest"
 
       - name: Install tools
         run: |
@@ -49,21 +50,26 @@ jobs:
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP archive not found"
+            echo "ERROR: ZIP archive not found in repository root"
             exit 1
           fi
 
           echo "Found archive: $ZIP_FILE"
+
           unzip -oq "$ZIP_FILE" -d game_src
 
           PROJECT_FILE=$(find game_src -name project.godot -print -quit)
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "ERROR: project.godot not found"
+            echo "ERROR: project.godot not found inside ZIP"
             exit 1
           fi
 
-          echo "PROJECT_DIR=$(dirname "$PROJECT_FILE")" >> "$GITHUB_ENV"
+          PROJECT_DIR=$(dirname "$PROJECT_FILE")
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Godot project found: $PROJECT_DIR"
 
       - name: Fix project permissions
         run: |
@@ -71,20 +77,35 @@ jobs:
 
       - name: Download Godot 4.3
         run: |
-          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+          wget -q \
+            https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+
           unzip -q Godot_v4.3-stable_linux.x86_64.zip
+
           chmod +x Godot_v4.3-stable_linux.x86_64
+
           sudo mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
 
-      - name: Install export templates
+          godot --version
+
+      - name: Install Godot export templates
         run: |
           mkdir -p ~/.local/share/godot/export_templates/4.3.stable
 
-          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
+          wget -q \
+            https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
 
-          unzip -q Godot_v4.3-stable_export_templates.tpz -d /tmp/godot-templates
+          mkdir -p /tmp/godot-templates
 
-          cp -r /tmp/godot-templates/templates/* ~/.local/share/godot/export_templates/4.3.stable/
+          unzip -q \
+            Godot_v4.3-stable_export_templates.tpz \
+            -d /tmp/godot-templates
+
+          cp -r \
+            /tmp/godot-templates/templates/. \
+            ~/.local/share/godot/export_templates/4.3.stable/
+
+          echo "Godot export templates installed"
 
       - name: Create Android export preset
         run: |
@@ -115,12 +136,14 @@ jobs:
           gradle_build/target_sdk=34
           package/unique_name="com.dumplinch.shooters"
           package/name="DUMPLINCH SHOOTERS"
-          package/signed=false
+          package/signed=true
           screen/immersive_mode=true
           screen/orientation=0
           version/code=1
           version/name="0.1.0"
           EOF
+
+          echo "Android export preset created"
 
       - name: Import project resources
         run: |
@@ -128,16 +151,40 @@ jobs:
             --path "$PROJECT_DIR" \
             --import --quit
 
+      - name: Install Android build template
+        run: |
+          godot --headless --editor \
+            --path "$PROJECT_DIR" \
+            --install-android-build-template \
+            --quit
+
+          if [ ! -f "$PROJECT_DIR/android/build/build.gradle" ]; then
+            echo "ERROR: Android Gradle build template was not installed"
+
+            if [ -d "$PROJECT_DIR/android" ]; then
+              find "$PROJECT_DIR/android" -maxdepth 4 -type f
+            fi
+
+            exit 1
+          fi
+
+          echo "Android build template installed successfully"
+
       - name: Build Debug APK
         run: |
-          mkdir -p build
+          mkdir -p "$GITHUB_WORKSPACE/build"
 
           godot --headless \
             --path "$PROJECT_DIR" \
             --export-debug "Android" \
             "$GITHUB_WORKSPACE/build/dumplinch-shooters-debug.apk"
 
-          test -s build/dumplinch-shooters-debug.apk
+          if [ ! -s "$GITHUB_WORKSPACE/build/dumplinch-shooters-debug.apk" ]; then
+            echo "ERROR: APK was not created"
+            exit 1
+          fi
+
+          echo "APK successfully created"
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

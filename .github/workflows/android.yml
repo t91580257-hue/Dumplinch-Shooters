@@ -33,6 +33,7 @@ jobs:
       - name: Install Android SDK packages
         run: |
           yes | sdkmanager --licenses || true
+
           sdkmanager \
             "platform-tools" \
             "platforms;android-34" \
@@ -51,9 +52,11 @@ jobs:
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP archive not found"
+            echo "ERROR: ZIP archive not found in repository root"
             exit 1
           fi
+
+          echo "Found archive: $ZIP_FILE"
 
           unzip -oq "$ZIP_FILE" -d game_src
 
@@ -65,7 +68,10 @@ jobs:
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT_FILE")
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Project directory: $PROJECT_DIR"
 
       - name: Fix project permissions
         run: |
@@ -79,24 +85,68 @@ jobs:
           unzip -q Godot_v4.3-stable_linux.x86_64.zip
 
           chmod +x Godot_v4.3-stable_linux.x86_64
+
           sudo mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
 
           godot --version
 
-      - name: Install Godot export templates
+      - name: Download and install Godot export templates
         run: |
-          mkdir -p ~/.local/share/godot/export_templates/4.3.stable
-
           wget -q \
             https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
 
           mkdir -p /tmp/godot-templates
 
-          unzip -q Godot_v4.3-stable_export_templates.tpz \
+          unzip -q \
+            Godot_v4.3-stable_export_templates.tpz \
             -d /tmp/godot-templates
 
-          cp -r /tmp/godot-templates/templates/. \
-            ~/.local/share/godot/export_templates/4.3.stable/
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.3.stable"
+
+          mkdir -p "$TEMPLATE_DIR"
+
+          cp -r /tmp/godot-templates/templates/. "$TEMPLATE_DIR/"
+
+          echo "Installed export templates:"
+          ls -lah "$TEMPLATE_DIR"
+
+          if [ ! -f "$TEMPLATE_DIR/android_source.zip" ]; then
+            echo "ERROR: android_source.zip not found in export templates"
+            exit 1
+          fi
+
+          if [ ! -f "$TEMPLATE_DIR/android_debug.apk" ]; then
+            echo "ERROR: android_debug.apk not found"
+            exit 1
+          fi
+
+      - name: Install Android Gradle build template manually
+        run: |
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.3.stable"
+
+          mkdir -p "$PROJECT_DIR/android/build"
+          mkdir -p "$PROJECT_DIR/android/plugins"
+
+          unzip -oq \
+            "$TEMPLATE_DIR/android_source.zip" \
+            -d "$PROJECT_DIR/android/build"
+
+          touch "$PROJECT_DIR/android/build/.gdignore"
+
+          echo "4.3.stable" > "$PROJECT_DIR/android/.build_version"
+
+          if [ ! -f "$PROJECT_DIR/android/build/build.gradle" ]; then
+            echo "ERROR: build.gradle was not found after extraction"
+
+            echo "Android directory contents:"
+            find "$PROJECT_DIR/android" -maxdepth 4 -type f
+
+            exit 1
+          fi
+
+          echo "Android Gradle template installed successfully"
+
+          ls -lah "$PROJECT_DIR/android/build"
 
       - name: Create Android export preset
         run: |
@@ -134,26 +184,33 @@ jobs:
           version/name="0.1.0"
           EOF
 
-      - name: Import and check project
+      - name: Configure Android SDK for Godot
         run: |
-          godot --headless --editor \
-            --path "$PROJECT_DIR" \
-            --import --quit
+          mkdir -p "$HOME/.config/godot"
 
-      - name: Install Android build template
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          EOF
+
+      - name: Import project and check scripts
         run: |
-          godot --headless --editor \
+          godot --headless \
+            --editor \
             --path "$PROJECT_DIR" \
-            --install-android-build-template \
+            --import \
             --quit
 
+      - name: Verify Android template
+        run: |
           if [ ! -f "$PROJECT_DIR/android/build/build.gradle" ]; then
-            echo "ERROR: Android build template was not installed"
-            find "$PROJECT_DIR/android" -maxdepth 4 -type f || true
+            echo "ERROR: Android Gradle template is missing"
             exit 1
           fi
 
-          echo "Android build template installed"
+          echo "Android template check passed"
 
       - name: Build Debug APK
         run: |
@@ -161,10 +218,16 @@ jobs:
 
           godot --headless \
             --path "$PROJECT_DIR" \
-            --export-debug "Android" \
+            --export-debug \
+            "Android" \
             "$GITHUB_WORKSPACE/build/dumplinch-shooters-debug.apk"
 
-          test -s "$GITHUB_WORKSPACE/build/dumplinch-shooters-debug.apk"
+          if [ ! -s "$GITHUB_WORKSPACE/build/dumplinch-shooters-debug.apk" ]; then
+            echo "ERROR: APK was not created"
+            exit 1
+          fi
+
+          echo "APK created successfully"
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

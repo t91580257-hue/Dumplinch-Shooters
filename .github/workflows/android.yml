@@ -1,0 +1,68 @@
+name: Build DUMPLINCH SHOOTERS APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'dumplinch_shooters.zip'
+      - '.github/workflows/android.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Download repository
+        uses: actions/checkout@v4
+
+      - name: Extract game ZIP
+        run: |
+          unzip -oq dumplinch_shooters.zip -d game
+          PROJECT_DIR=$(find game -name project.godot -printf '%h\n' | head -n 1)
+          test -n "$PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Install Godot 4.3
+        run: |
+          curl -L https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip -o godot.zip
+          unzip -oq godot.zip -d godot
+          sudo install godot/Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
+
+      - name: Install export templates
+        run: |
+          curl -L https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz -o templates.tpz
+          mkdir -p /tmp/templates "$HOME/.local/share/godot/export_templates/4.3.stable"
+          unzip -oq templates.tpz -d /tmp/templates
+          cp -R /tmp/templates/templates/. "$HOME/.local/share/godot/export_templates/4.3.stable/"
+
+      - name: Import project
+        run: godot --headless --editor --path "$PROJECT_DIR" --import --quit
+
+      - name: Build APK
+        run: |
+          mkdir -p build
+          godot --headless --path "$PROJECT_DIR" --export-debug "Android" build/DUMPLINCH-SHOOTERS.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DUMPLINCH-SHOOTERS-APK
+          path: build/DUMPLINCH-SHOOTERS.apk
+          if-no-files-found: error

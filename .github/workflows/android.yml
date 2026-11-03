@@ -1,3 +1,4 @@
+
 name: Build DUMPLINCH SHOOTERS Debug APK
 
 on:
@@ -50,26 +51,21 @@ jobs:
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP archive not found in repository root"
+            echo "ERROR: ZIP archive not found"
             exit 1
           fi
-
-          echo "Found archive: $ZIP_FILE"
 
           unzip -oq "$ZIP_FILE" -d game_src
 
           PROJECT_FILE=$(find game_src -name project.godot -print -quit)
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "ERROR: project.godot not found inside ZIP"
+            echo "ERROR: project.godot not found"
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT_FILE")
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-          echo "Godot project found: $PROJECT_DIR"
 
       - name: Fix project permissions
         run: |
@@ -83,7 +79,6 @@ jobs:
           unzip -q Godot_v4.3-stable_linux.x86_64.zip
 
           chmod +x Godot_v4.3-stable_linux.x86_64
-
           sudo mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
 
           godot --version
@@ -97,15 +92,11 @@ jobs:
 
           mkdir -p /tmp/godot-templates
 
-          unzip -q \
-            Godot_v4.3-stable_export_templates.tpz \
+          unzip -q Godot_v4.3-stable_export_templates.tpz \
             -d /tmp/godot-templates
 
-          cp -r \
-            /tmp/godot-templates/templates/. \
+          cp -r /tmp/godot-templates/templates/. \
             ~/.local/share/godot/export_templates/4.3.stable/
-
-          echo "Godot export templates installed"
 
       - name: Create Android export preset
         run: |
@@ -143,9 +134,7 @@ jobs:
           version/name="0.1.0"
           EOF
 
-          echo "Android export preset created"
-
-      - name: Import project resources
+      - name: Import and check project
         run: |
           godot --headless --editor \
             --path "$PROJECT_DIR" \
@@ -159,16 +148,12 @@ jobs:
             --quit
 
           if [ ! -f "$PROJECT_DIR/android/build/build.gradle" ]; then
-            echo "ERROR: Android Gradle build template was not installed"
-
-            if [ -d "$PROJECT_DIR/android" ]; then
-              find "$PROJECT_DIR/android" -maxdepth 4 -type f
-            fi
-
+            echo "ERROR: Android build template was not installed"
+            find "$PROJECT_DIR/android" -maxdepth 4 -type f || true
             exit 1
           fi
 
-          echo "Android build template installed successfully"
+          echo "Android build template installed"
 
       - name: Build Debug APK
         run: |
@@ -179,12 +164,7 @@ jobs:
             --export-debug "Android" \
             "$GITHUB_WORKSPACE/build/dumplinch-shooters-debug.apk"
 
-          if [ ! -s "$GITHUB_WORKSPACE/build/dumplinch-shooters-debug.apk" ]; then
-            echo "ERROR: APK was not created"
-            exit 1
-          fi
-
-          echo "APK successfully created"
+          test -s "$GITHUB_WORKSPACE/build/dumplinch-shooters-debug.apk"
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

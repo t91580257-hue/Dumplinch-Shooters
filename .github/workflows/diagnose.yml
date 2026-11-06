@@ -42,7 +42,11 @@ jobs:
           echo "Selected ZIP: $ZIP_FILE"
 
           mkdir -p game_src
+          chmod -R u+rwX game_src
+
           unzip -oq "$ZIP_FILE" -d game_src
+
+          chmod -R u+rwX game_src
 
           echo "=== PROJECT FILES ==="
           find game_src -name project.godot -type f -print
@@ -55,6 +59,7 @@ jobs:
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT")
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
           echo "=== PROJECT DIRECTORY ==="
@@ -87,6 +92,10 @@ jobs:
           set -euo pipefail
 
           echo "=== PROJECT SETTINGS ==="
+
+          chmod -R u+rwX "$PROJECT_DIR"
+
+          ls -l "$PROJECT_DIR/project.godot"
           cat "$PROJECT_DIR/project.godot"
 
           MAIN_SCENE=$(grep -E '^run/main_scene=' "$PROJECT_DIR/project.godot" | head -n 1 | sed -E 's/^[^"]*"([^"]+)".*/\1/')
@@ -103,8 +112,10 @@ jobs:
           if [ ! -f "$SCENE_PATH" ]; then
             echo "ERROR: Main scene file does not exist:"
             echo "$SCENE_PATH"
+
             echo "=== AVAILABLE SCENES ==="
             find "$PROJECT_DIR" -type f -name "*.tscn"
+
             exit 1
           fi
 
@@ -118,7 +129,6 @@ jobs:
 
           echo "=== GODOT PROJECT DIAGNOSTICS ===" | tee diagnosis.log
           echo "Project: $PROJECT_DIR" | tee -a diagnosis.log
-          echo "" | tee -a diagnosis.log
 
           godot --headless --editor \
             --path "$PROJECT_DIR" \
@@ -141,6 +151,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: DUMPLINCH-DIAGNOSIS
-          path: |
-            diagnosis.log
+          path: diagnosis.log
           if-no-files-found: warn

@@ -25,54 +25,122 @@ jobs:
           sudo apt-get install -y unzip wget
 
       - name: Find and extract game
+        shell: bash
         run: |
-          set -e
-          ZIP_FILE=$(find . -maxdepth 1 -iname "*.zip" -type f | head -n 1)
+          set -euo pipefail
+
+          echo "=== ZIP FILES ==="
+          find . -maxdepth 1 -iname "*.zip" -type f -print
+
+          ZIP_FILE=$(find . -maxdepth 1 -iname "*.zip" -type f | sort | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ZIP NOT FOUND"
+            echo "ERROR: ZIP NOT FOUND"
             exit 1
           fi
+
+          echo "Selected ZIP: $ZIP_FILE"
 
           mkdir -p game_src
           unzip -oq "$ZIP_FILE" -d game_src
 
-          PROJECT=$(find game_src -name project.godot -print -quit)
+          echo "=== PROJECT FILES ==="
+          find game_src -name project.godot -type f -print
+
+          PROJECT=$(find game_src -name project.godot -type f -print -quit)
 
           if [ -z "$PROJECT" ]; then
-            echo "project.godot NOT FOUND"
+            echo "ERROR: project.godot NOT FOUND"
             exit 1
           fi
 
-          echo "PROJECT_DIR=$(dirname "$PROJECT")" >> "$GITHUB_ENV"
+          PROJECT_DIR=$(dirname "$PROJECT")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "=== PROJECT DIRECTORY ==="
+          ls -la "$PROJECT_DIR"
+
+          echo "=== SCENES ==="
+          find "$PROJECT_DIR" -type f -name "*.tscn" -print
+
+          echo "=== SCRIPTS ==="
+          find "$PROJECT_DIR" -type f -name "*.gd" -print
 
       - name: Install Godot 4.3
-        run: |
-          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
-          unzip -q Godot_v4.3-stable_linux.x86_64.zip
-          chmod +x Godot_v4.3-stable_linux.x86_64
-          sudo mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
-
-      - name: Install export templates
-        run: |
-          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
-          mkdir -p /tmp/templates
-          unzip -q Godot_v4.3-stable_export_templates.tpz -d /tmp/templates
-          mkdir -p ~/.local/share/godot/export_templates/4.3.stable
-          cp -r /tmp/templates/templates/. ~/.local/share/godot/export_templates/4.3.stable/
-
-      - name: Check project
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
+
+          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+
+          unzip -q Godot_v4.3-stable_linux.x86_64.zip
+
+          chmod +x Godot_v4.3-stable_linux.x86_64
+
+          sudo mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
+
+          godot --version
+
+      - name: Check main scene
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== PROJECT SETTINGS ==="
+          cat "$PROJECT_DIR/project.godot"
+
+          MAIN_SCENE=$(grep -E '^run/main_scene=' "$PROJECT_DIR/project.godot" | head -n 1 | sed -E 's/^[^"]*"([^"]+)".*/\1/')
+
+          echo "Configured main scene: $MAIN_SCENE"
+
+          if [ -z "$MAIN_SCENE" ]; then
+            echo "ERROR: Main scene is not configured"
+            exit 1
+          fi
+
+          SCENE_PATH="$PROJECT_DIR/${MAIN_SCENE#res://}"
+
+          if [ ! -f "$SCENE_PATH" ]; then
+            echo "ERROR: Main scene file does not exist:"
+            echo "$SCENE_PATH"
+            echo "=== AVAILABLE SCENES ==="
+            find "$PROJECT_DIR" -type f -name "*.tscn"
+            exit 1
+          fi
+
+          echo "SUCCESS: Main scene exists"
+          echo "Scene file: $SCENE_PATH"
+
+      - name: Check project with Godot
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          echo "=== GODOT PROJECT DIAGNOSTICS ===" | tee diagnosis.log
+          echo "Project: $PROJECT_DIR" | tee -a diagnosis.log
+          echo "" | tee -a diagnosis.log
+
           godot --headless --editor \
             --path "$PROJECT_DIR" \
-            --import --quit 2>&1 | tee diagnosis.log
+            --quit 2>&1 | tee -a diagnosis.log
+
+          GODOT_EXIT=${PIPESTATUS[0]}
+
+          echo "" | tee -a diagnosis.log
+          echo "Godot exit code: $GODOT_EXIT" | tee -a diagnosis.log
+
+          if [ "$GODOT_EXIT" -ne 0 ]; then
+            echo "GODOT CHECK FAILED" | tee -a diagnosis.log
+            exit "$GODOT_EXIT"
+          fi
+
+          echo "GODOT CHECK FINISHED" | tee -a diagnosis.log
 
       - name: Upload diagnostic report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: DUMPLINCH-DIAGNOSIS
-          path: diagnosis.log
+          path: |
+            diagnosis.log
           if-no-files-found: warn

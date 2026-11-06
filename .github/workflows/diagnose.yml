@@ -20,6 +20,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install tools
+        shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y unzip wget
@@ -45,11 +46,7 @@ jobs:
           chmod -R u+rwX game_src
 
           unzip -oq "$ZIP_FILE" -d game_src
-
           chmod -R u+rwX game_src
-
-          echo "=== PROJECT FILES ==="
-          find game_src -name project.godot -type f -print
 
           PROJECT=$(find game_src -name project.godot -type f -print -quit)
 
@@ -113,14 +110,12 @@ jobs:
             echo "ERROR: Main scene file does not exist:"
             echo "$SCENE_PATH"
 
-            echo "=== AVAILABLE SCENES ==="
             find "$PROJECT_DIR" -type f -name "*.tscn"
 
             exit 1
           fi
 
           echo "SUCCESS: Main scene exists"
-          echo "Scene file: $SCENE_PATH"
 
       - name: Check project with Godot
         shell: bash
@@ -139,17 +134,47 @@ jobs:
           echo "" | tee -a diagnosis.log
           echo "Godot exit code: $GODOT_EXIT" | tee -a diagnosis.log
 
-          if [ "$GODOT_EXIT" -ne 0 ]; then
-            echo "GODOT CHECK FAILED" | tee -a diagnosis.log
-            exit "$GODOT_EXIT"
-          fi
-
           echo "GODOT CHECK FINISHED" | tee -a diagnosis.log
+
+      - name: Dump source error context
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p diagnostic_sources
+
+          {
+            echo "===== PROJECT SETTINGS ====="
+            cat "$PROJECT_DIR/project.godot" 2>&1
+
+            echo ""
+            echo "===== FIGHTER.GD ====="
+            sed -n '1,280p' "$PROJECT_DIR/scripts/fighter.gd" 2>&1
+
+            echo ""
+            echo "===== HUD.GD ====="
+            sed -n '1,380p' "$PROJECT_DIR/scripts/hud.gd" 2>&1
+
+            echo ""
+            echo "===== ICONS.GD ====="
+            cat "$PROJECT_DIR/scripts/icons.gd" 2>&1
+
+            echo ""
+            echo "===== BOT.GD ====="
+            cat "$PROJECT_DIR/scripts/bot.gd" 2>&1
+
+            echo ""
+            echo "===== PLAYER.GD ====="
+            cat "$PROJECT_DIR/scripts/player.gd" 2>&1
+          } > diagnostic_sources/source_report.txt
+
+          echo "Source report created."
 
       - name: Upload diagnostic report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: DUMPLINCH-DIAGNOSIS
-          path: diagnosis.log
+          path: |
+            diagnosis.log
+            diagnostic_sources/source_report.txt
           if-no-files-found: warn

@@ -1,0 +1,78 @@
+
+name: Diagnose DUMPLINCH SHOOTERS
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '*.zip'
+      - '.github/workflows/diagnose.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip wget
+
+      - name: Find and extract game
+        run: |
+          set -e
+          ZIP_FILE=$(find . -maxdepth 1 -iname "*.zip" -type f | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ZIP NOT FOUND"
+            exit 1
+          fi
+
+          mkdir -p game_src
+          unzip -oq "$ZIP_FILE" -d game_src
+
+          PROJECT=$(find game_src -name project.godot -print -quit)
+
+          if [ -z "$PROJECT" ]; then
+            echo "project.godot NOT FOUND"
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$(dirname "$PROJECT")" >> "$GITHUB_ENV"
+
+      - name: Install Godot 4.3
+        run: |
+          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+          unzip -q Godot_v4.3-stable_linux.x86_64.zip
+          chmod +x Godot_v4.3-stable_linux.x86_64
+          sudo mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
+
+      - name: Install export templates
+        run: |
+          wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
+          mkdir -p /tmp/templates
+          unzip -q Godot_v4.3-stable_export_templates.tpz -d /tmp/templates
+          mkdir -p ~/.local/share/godot/export_templates/4.3.stable
+          cp -r /tmp/templates/templates/. ~/.local/share/godot/export_templates/4.3.stable/
+
+      - name: Check project
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --editor \
+            --path "$PROJECT_DIR" \
+            --import --quit 2>&1 | tee diagnosis.log
+
+      - name: Upload diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DUMPLINCH-DIAGNOSIS
+          path: diagnosis.log
+          if-no-files-found: warn
